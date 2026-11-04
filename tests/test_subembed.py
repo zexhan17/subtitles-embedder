@@ -106,6 +106,29 @@ class TestSubEmbed(unittest.TestCase):
         temp_files = list(self.test_dir.glob("*__subembed_tmp__*"))
         self.assertEqual(len(temp_files), 0)
 
+    def test_convert_mkv_to_mp4_in_place(self):
+        """Tests converting MKV to MP4 container in-place with target_format='mp4'."""
+        mkv_target = self.test_dir / "movie_convert.mkv"
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(self.sample_video),
+            "-c:v", "copy", "-c:a", "copy",
+            str(mkv_target)
+        ]
+        subprocess.run(cmd, capture_output=True, check=True)
+
+        res = embed_subtitles(
+            video_path=mkv_target,
+            subtitles=self.sample_sub_srt,
+            target_format="mp4"
+        )
+        self.assertTrue(res["success"])
+        self.assertFalse(mkv_target.exists(), "Old MKV should be deleted")
+        mp4_target = mkv_target.with_suffix(".mp4")
+        self.assertTrue(mp4_target.exists(), "New MP4 should exist")
+        out_info = probe_media(mp4_target)
+        self.assertEqual(len(out_info["subtitle_streams"]), 1)
+
     def test_embed_mp4_lossless_custom_output(self):
         out_file = self.test_dir / "output_custom.mp4"
         if out_file.exists():

@@ -292,9 +292,11 @@ def embed_subtitles(
 
     # Set up staging / output paths
     if in_place:
-        # Atomic staging path in same directory
-        staging_p = v_path.parent / f".{v_path.name}.__subembed_tmp__.{fmt}"
-        final_dest = v_path
+        if fmt != v_path.suffix.lower().lstrip("."):
+            final_dest = v_path.with_suffix(f".{fmt}")
+        else:
+            final_dest = v_path
+        staging_p = v_path.parent / f".{final_dest.name}.__subembed_tmp__.{fmt}"
     else:
         final_dest = Path(output_path).resolve()
         if final_dest == v_path:
@@ -387,10 +389,13 @@ def embed_subtitles(
             f"Verification failed: Expected {expected_count} subtitle tracks, found {len(new_sub_streams)}."
         )
 
-    # If in_place, atomically replace the original file
+    # If in_place, atomically replace the target file
     if in_place:
         try:
             os.replace(staging_p, final_dest)
+            # If the container format changed (e.g. .mkv -> .mp4), clean up the original file
+            if final_dest != v_path and v_path.exists():
+                v_path.unlink(missing_ok=True)
         except OSError as e:
             if staging_p.exists():
                 staging_p.unlink(missing_ok=True)
