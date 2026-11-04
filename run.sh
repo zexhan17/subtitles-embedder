@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # SubEmbed Launcher
-# Automatically detects arguments: opens GUI if no args, or CLI if video argument is passed.
+# Robustly resolves canonical script location even when invoked via symlink.
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHONPATH="$DIR:$PYTHONPATH" exec python3 -m subembed.cli "$@"
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+PROJECT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+PYTHONPATH="$PROJECT_DIR:$PYTHONPATH" exec python3 -m subembed.cli "$@"
