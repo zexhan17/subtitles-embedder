@@ -19,3 +19,4 @@ __all__ = [
     "embed_subtitles",
     "detect_language_from_filename"
 ]
+

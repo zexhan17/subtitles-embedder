@@ -1,0 +1,11 @@
+README.md
+setup.py
+subembed/__init__.py
+subembed/cli.py
+subembed/core.py
+subembed.egg-info/PKG-INFO
+subembed.egg-info/SOURCES.txt
+subembed.egg-info/dependency_links.txt
+subembed.egg-info/entry_points.txt
+subembed.egg-info/top_level.txt
+tests/test_subembed.py

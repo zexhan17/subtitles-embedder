@@ -1,6 +1,7 @@
 """
 Test suite for SubEmbed.
-Includes positive functional tests, stream integrity checks, and mandatory adversarial/refusal tests.
+Includes in-place embedding verification, positive functional tests,
+stream integrity checks, and mandatory adversarial/refusal tests.
 """
 
 import os
@@ -75,8 +76,38 @@ class TestSubEmbed(unittest.TestCase):
         self.assertIn("sample_video.srt", candidate_names)
         self.assertIn("sample_video.en.vtt", candidate_names)
 
-    def test_embed_mp4_lossless_stream_copy(self):
-        out_file = self.test_dir / "output_test.mp4"
+    def test_embed_in_place_mp4(self):
+        """Tests that omitting output_path embeds directly into the original file."""
+        target_video = self.test_dir / "target_inplace.mp4"
+        shutil.copy(self.sample_video, target_video)
+
+        # Before embedding, verify 0 subtitle streams
+        before_info = probe_media(target_video)
+        self.assertEqual(len(before_info["subtitle_streams"]), 0)
+
+        res = embed_subtitles(
+            video_path=target_video,
+            subtitles=self.sample_sub_srt
+        )
+
+        self.assertTrue(res["success"])
+        self.assertTrue(res["in_place"])
+        self.assertEqual(res["output_video"], str(target_video))
+
+        # After embedding, target_video itself now contains the subtitle stream
+        after_info = probe_media(target_video)
+        self.assertEqual(after_info["video_streams"][0]["codec"], "h264")
+        self.assertEqual(after_info["audio_streams"][0]["codec"], "aac")
+        self.assertEqual(len(after_info["subtitle_streams"]), 1)
+        self.assertEqual(after_info["subtitle_streams"][0]["codec"], "mov_text")
+        self.assertTrue(after_info["subtitle_streams"][0]["default"])
+
+        # Ensure no temporary staging files were left behind
+        temp_files = list(self.test_dir.glob("*__subembed_tmp__*"))
+        self.assertEqual(len(temp_files), 0)
+
+    def test_embed_mp4_lossless_custom_output(self):
+        out_file = self.test_dir / "output_custom.mp4"
         if out_file.exists():
             out_file.unlink()
 
@@ -88,21 +119,16 @@ class TestSubEmbed(unittest.TestCase):
         )
 
         self.assertTrue(res["success"])
+        self.assertFalse(res["in_place"])
         self.assertTrue(out_file.exists())
         self.assertGreater(out_file.stat().st_size, 0)
         self.assertEqual(res["video_codec"], "h264")
 
-        # Verify stream topology of output
         out_info = probe_media(out_file)
-        # Check codecs were not re-encoded
         self.assertEqual(out_info["video_streams"][0]["codec"], "h264")
         self.assertEqual(out_info["audio_streams"][0]["codec"], "aac")
-
-        # Check subtitle stream exists and is mov_text for MP4
         self.assertEqual(len(out_info["subtitle_streams"]), 1)
-        sub_stream = out_info["subtitle_streams"][0]
-        self.assertEqual(sub_stream["codec"], "mov_text")
-        self.assertTrue(sub_stream["default"])
+        self.assertEqual(out_info["subtitle_streams"][0]["codec"], "mov_text")
 
     def test_embed_mkv_container(self):
         out_file = self.test_dir / "output_test.mkv"
@@ -131,15 +157,12 @@ class TestSubEmbed(unittest.TestCase):
         shutil.copy(self.sample_video, tricky_video)
         shutil.copy(self.sample_sub_srt, tricky_sub)
 
-        out_file = self.test_dir / "tricky_output.mp4"
         res = embed_subtitles(
             video_path=tricky_video,
-            subtitles=tricky_sub,
-            output_path=out_file,
-            force_overwrite=True
+            subtitles=tricky_sub
         )
         self.assertTrue(res["success"])
-        self.assertTrue(out_file.exists())
+        self.assertTrue(tricky_video.exists())
 
     # --- Refusal / Negative Adversarial Tests ---
 
@@ -173,16 +196,6 @@ class TestSubEmbed(unittest.TestCase):
         with self.assertRaises(SubEmbedError) as ctx:
             embed_subtitles(self.sample_video, bad_sub)
         self.assertIn("Unsupported subtitle format", str(ctx.exception))
-
-    def test_refuse_identical_input_output_path(self):
-        with self.assertRaises(SubEmbedError) as ctx:
-            embed_subtitles(
-                video_path=self.sample_video,
-                subtitles=self.sample_sub_srt,
-                output_path=self.sample_video,
-                force_overwrite=True
-            )
-        self.assertIn("cannot be identical", str(ctx.exception))
 
     def test_refuse_overwrite_when_not_forced(self):
         existing_out = self.test_dir / "pre_existing.mp4"

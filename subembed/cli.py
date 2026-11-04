@@ -1,12 +1,10 @@
 """
 Command-Line Interface for SubEmbed.
-Supports single-file muxing, automatic subtitle detection, batch processing, and GUI launching.
+Fast, lossless container softsub muxer (in-place embedding, zero quality loss).
 """
 
 import argparse
-import os
 import sys
-import time
 from pathlib import Path
 
 from .core import (
@@ -55,7 +53,7 @@ def print_info(video_path: Path):
     for a in info["audio_streams"]:
         print(f"  • #{a['index']} [Audio]: Codec={a['codec']}  Channels={a['channels']}  Lang={a['language']}")
 
-    print(f"\n{BOLD}Existing Subtitle Tracks:{RESET}")
+    print(f"\n{BOLD}Embedded Subtitle Tracks:{RESET}")
     if info["subtitle_streams"]:
         for s in info["subtitle_streams"]:
             default_marker = f"{GREEN}[DEFAULT]{RESET}" if s["default"] else ""
@@ -70,46 +68,32 @@ def print_info(video_path: Path):
 def main():
     parser = argparse.ArgumentParser(
         prog="subembed",
-        description="SubEmbed: Lossless Container Subtitle Embedder (Zero Quality Loss Softsub Muxer)",
+        description="SubEmbed: Lossless Container Subtitle Embedder (embeds directly into video with zero quality loss)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  subembed movie.mp4 subs.srt
-  subembed movie.mp4                           # Automatically finds movie.srt in the same folder
-  subembed movie.mp4 subs.srt -l eng -t "English"
-  subembed movie.mp4 subs.srt -o output.mkv    # Mux into MKV container
-  subembed --batch *.mp4                       # Batch process all mp4 videos with matching .srt files
+  subembed movie.mp4 subtitles.srt             # Embeds directly into movie.mp4 (in-place)
+  subembed movie.mp4                           # Auto-detects movie.srt in the same directory
+  subembed movie.mp4 subtitles.srt -l eng -t "English"
+  subembed movie.mp4 subtitles.srt -o new.mp4  # Save to separate file instead of in-place
+  subembed --batch *.mp4                       # In-place embed subtitles for all videos
   subembed --info movie.mp4                    # Inspect streams and existing subtitles
-  subembed --gui                               # Launch desktop GUI
         """
     )
 
     parser.add_argument("video", nargs="?", help="Path to video file (.mp4, .mkv, .mov, etc.)")
     parser.add_argument("subtitles", nargs="*", help="Path to subtitle file(s) (.srt, .vtt, .ass)")
-    parser.add_argument("-o", "--output", help="Output file path (default: <filename>.embedded.<ext>)")
+    parser.add_argument("-o", "--output", help="Optional output path (default: in-place, replaces original video)")
     parser.add_argument("-l", "--lang", help="Subtitle language code (e.g. eng, spa, fra, jpn)")
     parser.add_argument("-t", "--title", help="Subtitle track title (e.g. 'English', 'Full Subtitles')")
     parser.add_argument("-f", "--format", choices=["mp4", "mkv", "mov"], help="Force specific container format")
-    parser.add_argument("-y", "--force", action="store_true", help="Force overwrite output file if it exists")
+    parser.add_argument("-y", "--force", action="store_true", help="Force overwrite output file if writing to new file")
     parser.add_argument("--info", action="store_true", help="Show stream & subtitle info for the input video and exit")
     parser.add_argument("--batch", action="store_true", help="Batch mode: process multiple videos with auto-detected subtitles")
-    parser.add_argument("--gui", action="store_true", help="Launch native desktop GUI")
 
     args = parser.parse_args()
 
-    # GUI Mode
-    if args.gui:
-        from .gui import launch_gui
-        launch_gui()
-        return 0
-
-    # If no arguments given at all, launch GUI or show help
     if not args.video:
-        if len(sys.argv) == 1:
-            # When run with no args from terminal or desktop launcher, open GUI
-            from .gui import launch_gui
-            launch_gui()
-            return 0
         parser.print_help()
         return 1
 
@@ -121,12 +105,11 @@ Examples:
 
     # Batch Mode
     if args.batch:
-        # If batch flag was passed or multiple files
         videos_to_process = [video_path]
         if args.subtitles:
             videos_to_process.extend([Path(p) for p in args.subtitles])
 
-        print(f"\n{BOLD}{CYAN}=== SubEmbed Batch Processing ==={RESET}\n")
+        print(f"\n{BOLD}{CYAN}=== SubEmbed Batch Processing (In-Place) ==={RESET}\n")
         success_count = 0
         for v in videos_to_process:
             if not v.is_file():
@@ -137,20 +120,21 @@ Examples:
                 continue
 
             sub_target = candidates[0]
-            print(f"[{CYAN}MUXING{RESET}] {v.name} + {sub_target.name}...")
+            print(f"[{CYAN}EMBEDDING{RESET}] {v.name} + {sub_target.name}...")
             try:
                 res = embed_subtitles(
                     video_path=v,
                     subtitles=[sub_target],
+                    output_path=args.output,
                     force_overwrite=args.force,
                     target_format=args.format
                 )
-                print(f"[{GREEN}DONE{RESET}] Saved: {BOLD}{Path(res['output_video']).name}{RESET} ({res['elapsed_seconds']}s, {format_size(res['output_size_bytes'])})")
+                print(f"[{GREEN}DONE{RESET}] Updated: {BOLD}{Path(res['output_video']).name}{RESET} in {res['elapsed_seconds']}s ({format_size(res['output_size_bytes'])})")
                 success_count += 1
             except SubEmbedError as e:
                 print(f"[{RED}FAILED{RESET}] {v.name}: {e}")
 
-        print(f"\n{BOLD}Batch finished:{RESET} {success_count} video(s) processed successfully.\n")
+        print(f"\n{BOLD}Batch finished:{RESET} {success_count} video(s) updated in-place.\n")
         return 0
 
     # Single Video Mode
@@ -176,7 +160,7 @@ Examples:
             "title": args.title or det_name
         })
 
-    print(f"\n{BOLD}{CYAN}SubEmbed{RESET} - Embedding subtitle track into container...")
+    print(f"\n{BOLD}{CYAN}SubEmbed{RESET} - Embedding subtitles into container...")
     print(f"  • Video:     {video_path.name}")
     for spec in sub_specs:
         print(f"  • Subtitle:  {spec['path'].name} [Lang: {spec['language']}, Title: '{spec['title']}']")
@@ -194,12 +178,12 @@ Examples:
         return 1
 
     out_file = Path(result["output_video"])
+    action_text = "Updated original video in-place" if result["in_place"] else "Saved to output"
     print(f"\n{GREEN}{BOLD}✓ Subtitles embedded successfully!{RESET}")
-    print(f"  • Output file:  {BOLD}{out_file}{RESET}")
+    print(f"  • Target:       {BOLD}{out_file}{RESET} ({action_text})")
     print(f"  • File size:    {format_size(result['output_size_bytes'])}")
     print(f"  • Elapsed time: {result['elapsed_seconds']}s (Zero quality loss, stream-copied)")
     print(f"  • Video codec:  {result['video_codec']} (untouched)")
-    print(f"  • Audio codecs: {', '.join(result['audio_codecs'])} (untouched)")
     print(f"  • Total subs:   {result['total_subtitles_in_file']} tracks in container\n")
     return 0
 
